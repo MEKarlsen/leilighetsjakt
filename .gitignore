@@ -1,0 +1,36 @@
+# --- Personlig konfigurasjon (sensitiv info) ---
+private.txt
+
+# --- Data og loggfiler ---
+apartments.json
+apartments.md
+screenshots/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# --- Virtuelle miljøer ---
+venv/
+.venv/
+env/
+.env/
+
+# --- IDE og systemfiler ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Miljøvariabler ---
+.env
+.env.*
