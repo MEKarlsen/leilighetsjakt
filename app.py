@@ -56,6 +56,10 @@ FIELDS = [
     ("tg1_antall",         "TG1",          "TG1 antall"),
     ("hoydepunkter_antall","Høydepunkter", "Høydepunkter antall"),
     ("risikoer_antall",    "Risikoer",     "Risikoer antall"),
+    ("reisetid_sopra_gange",  "🚶 Sopra",  None),
+    ("reisetid_sopra_koll",   "🚌 Sopra",  None),
+    ("reisetid_bouvet_gange", "🚶 Bouvet", None),
+    ("reisetid_bouvet_koll",  "🚌 Bouvet", None),
     ("url",           "URL",            None),
     ("salgsoppgave",  "Salgsoppgave",   "Salgsoppgave"),
     ("hentet",        "Hentet",         None),
@@ -357,6 +361,7 @@ TEMPLATE = """<!doctype html>
   <a class="btn btn-outline" href="/refresh-all" onclick="return confirm('Oppdater alle leiligheter fra finn.no?')">&#8635; Oppdater alle</a>
   <a class="btn btn-outline" href="/hent-tg-alle" onclick="return confirm('Hent TG-data fra visning.ai for alle leiligheter? Dette kan ta litt tid.')">&#11015; Hent TG alle</a>
   <a class="btn btn-outline" href="/kart">&#128506; Kart</a>
+  <a class="btn btn-outline" href="/hent-reisetid-alle" onclick="return confirm('Hent reisetid for alle leiligheter (krever koordinater)? Kan ta litt tid.')">&#128661; Reisetid alle</a>
 </div>
 
 {% if message %}
@@ -382,6 +387,7 @@ TEMPLATE = """<!doctype html>
           <button class="del-btn" title="Slett">✕</button>
         </form>
         <a class="tg-fetch-btn" href="/hent-tg/{{ apt.get('finnkode','') }}" title="Hent TG-data fra visning.ai">⬇TG</a>
+        <a class="tg-fetch-btn" href="/hent-reisetid/{{ apt.get('finnkode','') }}" title="Hent reisetid til jobb">⬇RT</a>
       </td>
       {% for key, label, _ in fields %}
       <td>
@@ -404,6 +410,10 @@ TEMPLATE = """<!doctype html>
           <span class="highlight-badge" onclick="showHighlights('{{ apt.get('finnkode','') }}')">
             ✨ {{ apt.get(key, '') }}
           </span>
+          {% endif %}
+        {% elif key in ('reisetid_sopra_gange', 'reisetid_sopra_koll', 'reisetid_bouvet_gange', 'reisetid_bouvet_koll') %}
+          {% if apt.get(key) is not none and apt.get(key) != '' %}
+            {{ apt.get(key) }} min
           {% endif %}
         {% elif key == 'risikoer_antall' %}
           {% if apt.get(key) %}
@@ -1094,6 +1104,158 @@ def geocode_alle():
         time.sleep(1.0)  # Nominatim rate limit
     save_data(apartments)
     return redirect(url_for("kart"))
+
+
+# ---------------------------------------------------------------------------
+# Travel time (Entur walking + Entur public transit)
+# ---------------------------------------------------------------------------
+
+WORK_PLACES = {
+    "sopra": {
+        "name": "Sopra Steria",
+        "address": "Biskop Gunnerus' gate 14A, 0185 Oslo",
+    },
+    "bouvet": {
+        "name": "Bouvet",
+        "address": "Sørkedalsveien 8, 0369 Oslo",
+    },
+}
+
+_WORK_COORDS: dict[str, tuple[float, float] | None] = {}
+
+
+def _get_work_coords(key: str) -> tuple[float, float] | None:
+    """Geocode (and cache in memory) a work address."""
+    if key not in _WORK_COORDS:
+        _WORK_COORDS[key] = geocode_address(WORK_PLACES[key]["address"])
+    return _WORK_COORDS[key]
+
+
+def _entur_trip(from_lat: float, from_lon: float, to_lat: float, to_lon: float, modes_block: str) -> int | None:
+    """Shared helper: call Entur Journey Planner and return duration in minutes."""
+    query = """
+    {
+      trip(
+        from: { coordinates: { latitude: %(flat)s, longitude: %(flon)s } }
+        to:   { coordinates: { latitude: %(tlat)s, longitude: %(tlon)s } }
+        numTripPatterns: 1
+        %(modes)s
+      ) {
+        tripPatterns { duration }
+      }
+    }
+    """ % {"flat": from_lat, "flon": from_lon, "tlat": to_lat, "tlon": to_lon, "modes": modes_block}
+    try:
+        r = http_requests.post(
+            "https://api.entur.io/journey-planner/v3/graphql",
+            json={"query": query},
+            headers={
+                "ET-Client-Name": "mekarlsen-leilighetsjakt",
+                "Content-Type": "application/json",
+            },
+            timeout=15,
+        )
+        r.raise_for_status()
+        patterns = r.json().get("data", {}).get("trip", {}).get("tripPatterns", [])
+        if patterns:
+            return round(patterns[0]["duration"] / 60)
+    except Exception:
+        pass
+    return None
+
+
+def get_walking_minutes(from_lat: float, from_lon: float, to_lat: float, to_lon: float) -> int | None:
+    """Walking time in minutes via Entur Journey Planner (foot-only directMode)."""
+    return _entur_trip(from_lat, from_lon, to_lat, to_lon,
+                       'modes: { directMode: foot, transportModes: [] }')
+
+
+def get_transit_minutes(from_lat: float, from_lon: float, to_lat: float, to_lon: float) -> int | None:
+    """Public-transit travel time in minutes via the Entur Journey Planner API.
+    Uses next Monday 08:00 as a representative morning rush-hour departure."""
+    from datetime import timedelta
+
+    now = datetime.now()
+    days_until_monday = (7 - now.weekday()) % 7
+    if days_until_monday == 0 and now.hour >= 8:
+        days_until_monday = 7
+    dep_time = (now + timedelta(days=days_until_monday)).replace(
+        hour=8, minute=0, second=0, microsecond=0
+    )
+    dep_iso = dep_time.strftime("%Y-%m-%dT%H:%M:%S+02:00")
+    return _entur_trip(from_lat, from_lon, to_lat, to_lon,
+                       f'dateTime: "{dep_iso}"')
+
+
+def fetch_travel_times(apt: dict) -> dict:
+    """Fetch walk + transit minutes to both work places. Returns dict of field updates."""
+    lat = apt.get("lat")
+    lon = apt.get("lon")
+    if not lat or not lon:
+        return {}
+    updates: dict = {}
+    for key in ("sopra", "bouvet"):
+        work_coords = _get_work_coords(key)
+        if not work_coords:
+            continue
+        walk = get_walking_minutes(lat, lon, work_coords[0], work_coords[1])
+        if walk is not None:
+            updates[f"reisetid_{key}_gange"] = walk
+        transit = get_transit_minutes(lat, lon, work_coords[0], work_coords[1])
+        if transit is not None:
+            updates[f"reisetid_{key}_koll"] = transit
+    return updates
+
+
+@app.get("/hent-reisetid/<finnkode>")
+def hent_reisetid(finnkode: str):
+    apartments = load_data()
+    for i, apt in enumerate(apartments):
+        if apt.get("finnkode") == finnkode:
+            if not apt.get("lat") or not apt.get("lon"):
+                return _render(
+                    apartments=apartments,
+                    message=f"Mangler koordinater for {finnkode}. Geokod adressen først.",
+                    ok=False,
+                )
+            updates = fetch_travel_times(apt)
+            if not updates:
+                return _render(
+                    apartments=apartments,
+                    message=f"Kunne ikke hente reisetid for {apt.get('adresse', finnkode)}",
+                    ok=False,
+                )
+            apartments[i].update(updates)
+            save_data(apartments)
+            return _render(
+                apartments=apartments,
+                message=f"✓ Reisetid hentet for {apt.get('adresse', finnkode)}",
+                ok=True,
+            )
+    return _render(message=f"Fant ikke finnkode {finnkode}", ok=False)
+
+
+@app.get("/hent-reisetid-alle")
+def hent_reisetid_alle():
+    apartments = load_data()
+    ok_count = errors = skipped = 0
+    for i, apt in enumerate(apartments):
+        if not apt.get("lat") or not apt.get("lon"):
+            skipped += 1
+            continue
+        updates = fetch_travel_times(apt)
+        if updates:
+            apartments[i].update(updates)
+            ok_count += 1
+        else:
+            errors += 1
+    save_data(apartments)
+    parts = [f"Reisetid hentet for {ok_count} leiligheter."]
+    if skipped:
+        parts.append(f"{skipped} mangler koordinater (geokod først).")
+    if errors:
+        parts.append(f"{errors} feil.")
+    return _render(apartments=apartments, message=" ".join(parts), ok=True)
 
 
 # ---------------------------------------------------------------------------
