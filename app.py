@@ -845,19 +845,53 @@ def geocode_address(address: str) -> tuple[float, float] | None:
     # Strip parenthetical notes and ' - <description>' suffixes that confuse Nominatim
     cleaned = re.sub(r"\s*\([^)]*\)", "", address).strip()
     cleaned = re.split(r"\s+-\s+", cleaned)[0].strip()
-    try:
-        r = http_requests.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={"q": cleaned, "format": "json", "limit": 1, "countrycodes": "no"},
-            headers=_NOMINATIM_HEADERS,
-            timeout=10,
-        )
-        r.raise_for_status()
-        results = r.json()
-        if results:
-            return float(results[0]["lat"]), float(results[0]["lon"])
-    except Exception:
-        pass
+    
+    def try_geocode(query: str) -> tuple[float, float] | None:
+        """Helper to attempt geocoding with a query string."""
+        try:
+            r = http_requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": query, "format": "json", "limit": 1, "countrycodes": "no"},
+                headers=_NOMINATIM_HEADERS,
+                timeout=10,
+            )
+            r.raise_for_status()
+            results = r.json()
+            if results:
+                return float(results[0]["lat"]), float(results[0]["lon"])
+        except Exception:
+            pass
+        return None
+    
+    # Try with full address first
+    result = try_geocode(cleaned)
+    if result:
+        return result
+    
+    # Try removing building numbers with letters (e.g., "3C", "1A") that confuse Nominatim
+    # These appear after the street name and number, like "Olaf Ryes plass 3C" -> "Olaf Ryes plass"
+    no_letter_suffix = re.sub(r"\s+\d+[A-Z]\b", "", cleaned, flags=re.IGNORECASE).strip()
+    if no_letter_suffix != cleaned:
+        result = try_geocode(no_letter_suffix)
+        if result:
+            return result
+    
+    # Try removing postal code (which is often wrong/incomplete)
+    simplified = re.sub(r",?\s*\d{4}\b", "", no_letter_suffix).strip()
+    simplified = re.sub(r",\s+$", "", simplified).strip()
+    if simplified != no_letter_suffix:
+        result = try_geocode(simplified)
+        if result:
+            return result
+    
+    # Try just street address without number
+    street_only = re.sub(r"\s+\d+.*?(?:,|$)", ",", cleaned).strip()
+    street_only = re.sub(r",\s+$", "", street_only).strip()
+    if street_only and street_only != cleaned and street_only != no_letter_suffix:
+        result = try_geocode(street_only)
+        if result:
+            return result
+    
     return None
 
 
