@@ -62,6 +62,7 @@ FIELDS = [
     ("reisetid_bouvet_koll",  "🚌 Bouvet", None),
     ("url",           "URL",            None),
     ("salgsoppgave",  "Salgsoppgave",   "Salgsoppgave"),
+    ("visningai",     "Visning.ai",     None),
     ("hentet",        "Hentet",         None),
 ]
 
@@ -395,6 +396,8 @@ TEMPLATE = """<!doctype html>
           <a href="{{ apt[key] }}" target="_blank" rel="noopener">Annonse ↗</a>
         {% elif key == 'salgsoppgave' and apt.get(key) %}
           <a href="{{ apt[key] }}" target="_blank" rel="noopener">Salgsoppgave ↗</a>
+        {% elif key == 'visningai' %}
+          <a href="https://visning.ai/{{ apt.get('finnkode','') }}" target="_blank" rel="noopener">Visning.ai ↗</a>
         {% elif key == 'solgt' and apt.get(key) %}
           <span class="solgt-badge">Solgt</span>
         {% elif key in ('tg3_antall', 'tg2_antall', 'tg1_antall') %}
