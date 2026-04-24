@@ -286,6 +286,16 @@ TEMPLATE = """<!doctype html>
     td a { color: #1D4ED8; text-decoration: none; }
     td a:hover { text-decoration: underline; }
 
+    tbody tr.favoritt-row { background: #fffbeb !important; }
+    tbody tr.favoritt-row:hover { background: #fef9c3 !important; }
+    .star-btn {
+      background: none; border: none; cursor: pointer;
+      font-size: 1.1rem; padding: 0 0.15rem; line-height: 1;
+      color: #d1d5db;
+    }
+    .star-btn.active { color: #f59e0b; }
+    .star-btn:hover { color: #f59e0b; }
+
     .del-btn {
       background: none; border: none; cursor: pointer;
       color: #94a3b8; font-size: 0.85rem; padding: 0 0.25rem;
@@ -359,6 +369,7 @@ TEMPLATE = """<!doctype html>
     <button class="btn btn-blue" type="submit">+ Hent</button>
   </form>
   <a class="btn btn-outline" href="/export">&#8595; Excel</a>
+  <a class="btn btn-outline" href="/export-favoritter">&#8595; Excel (favoritter)</a>
   <form method="post" action="/import" enctype="multipart/form-data" id="import-form">
     <label class="import-label">
       &#8593; Importer Excel
@@ -390,8 +401,11 @@ TEMPLATE = """<!doctype html>
   </thead>
   <tbody>
     {% for apt in apartments %}
-    <tr{% if apt.get('solgt') %} class="solgt-row"{% endif %}>
+    <tr{% if apt.get('solgt') %} class="solgt-row"{% elif apt.get('favoritt') %} class="favoritt-row"{% endif %}>
       <td>
+        <form method="post" action="/toggle-favoritt/{{ apt.get('finnkode','') }}" style="display:inline">
+          <button class="star-btn{% if apt.get('favoritt') %} active{% endif %}" title="Favoritt">★</button>
+        </form>
         <form method="post" action="/delete/{{ apt.get('finnkode','') }}" style="display:inline">
           <button class="del-btn" title="Slett">✕</button>
         </form>
@@ -682,6 +696,8 @@ SYNC_TEMPLATE = """<!doctype html>
 def _render(apartments=None, message=None, ok=True, prefill=""):
     if apartments is None:
         apartments = load_data()
+    # Favourites float to the top
+    apartments = sorted(apartments, key=lambda a: (0 if a.get("favoritt") else 1))
     return render_template_string(
         TEMPLATE, apartments=apartments, message=message,
         ok=ok, prefill=prefill, fields=FIELDS,
@@ -733,6 +749,17 @@ def export_excel():
     )
 
 
+@app.get("/export-favoritter")
+def export_favoritter():
+    favoritter = [a for a in load_data() if a.get("favoritt")]
+    buf = build_excel(favoritter)
+    filename = f"favoritter_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    return send_file(
+        buf, as_attachment=True, download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 @app.post("/import")
 def import_excel_route():
     f = request.files.get("file")
@@ -745,6 +772,17 @@ def import_excel_route():
 @app.post("/delete/<finnkode>")
 def delete(finnkode: str):
     save_data([a for a in load_data() if a.get("finnkode") != finnkode])
+    return redirect(url_for("index"))
+
+
+@app.post("/toggle-favoritt/<finnkode>")
+def toggle_favoritt(finnkode: str):
+    apartments = load_data()
+    for apt in apartments:
+        if apt.get("finnkode") == finnkode:
+            apt["favoritt"] = not apt.get("favoritt", False)
+            break
+    save_data(apartments)
     return redirect(url_for("index"))
 
 
