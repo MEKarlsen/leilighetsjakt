@@ -131,26 +131,34 @@ def build_excel(apartments: list[dict]) -> io.BytesIO:
     # Data rows
     url_col   = next(i + 1 for i, (k, _, _) in enumerate(FIELDS) if k == "url")
     salg_col  = next(i + 1 for i, (k, _, _) in enumerate(FIELDS) if k == "salgsoppgave")
+    visningai_col = next(i + 1 for i, (k, _, _) in enumerate(FIELDS) if k == "visningai")
 
     for apt in apartments:
         row_vals = [apt.get(key, "") for key, _, _ in FIELDS]
         ws.append(row_vals)
         r = ws.max_row
 
-        # Make URL and Salgsoppgave clickable hyperlinks
+        # Make URL, Salgsoppgave, and Visning.ai clickable hyperlinks
         url_val = apt.get("url", "")
         if url_val:
-            cell = ws.cell(row=r, column=url_col)
-            cell.value = "Annonse"
-            cell.hyperlink = url_val
-            cell.font = Font(color="1D4ED8", underline="single")
+          cell = ws.cell(row=r, column=url_col)
+          cell.value = "Annonse"
+          cell.hyperlink = url_val
+          cell.font = Font(color="1D4ED8", underline="single")
 
         salg_val = apt.get("salgsoppgave", "")
         if salg_val:
-            cell = ws.cell(row=r, column=salg_col)
-            cell.value = "Salgsoppgave"
-            cell.hyperlink = salg_val
-            cell.font = Font(color="1D4ED8", underline="single")
+          cell = ws.cell(row=r, column=salg_col)
+          cell.value = "Salgsoppgave"
+          cell.hyperlink = salg_val
+          cell.font = Font(color="1D4ED8", underline="single")
+
+        finnkode = apt.get("finnkode", "")
+        if finnkode:
+          cell = ws.cell(row=r, column=visningai_col)
+          cell.value = "Visning.ai"
+          cell.hyperlink = f"https://visning.ai/{finnkode}"
+          cell.font = Font(color="1D4ED8", underline="single")
 
     # Auto-width columns
     for col_idx in range(1, len(FIELDS) + 1):
