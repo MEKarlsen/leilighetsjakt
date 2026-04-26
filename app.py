@@ -42,6 +42,7 @@ FIELDS = [
     ("felleskost",    "Felleskost/mnd", "Felleskost/mnd"),
     ("omkostninger",  "Omkostninger",   "Omkostninger"),
     ("bra_i",         "BRA-i",          "BRA-i"),
+    ("pris_per_kvm",  "kr/m²",          None),
     ("bra",           "BRA",            "BRA"),
     ("rom",           "Rom",            "Rom"),
     ("soverom",       "Soverom",        "Soverom"),
@@ -106,6 +107,26 @@ def merge(apartments: list[dict], new_apt: dict) -> tuple[list[dict], str]:
             return apartments, "Oppdatert"
     apartments.append(new_apt)
     return apartments, "Lagt til"
+
+
+def _compute_pris_per_kvm(apt: dict) -> str:
+    """Compute price per m² from prisantydning and bra_i. Returns formatted string or ''."""
+    import re
+    try:
+        pris = int(re.sub(r"[^\d]", "", apt.get("prisantydning", "")))
+        bra  = int(re.sub(r"[^\d]", "", apt.get("bra_i", "")))
+        if pris and bra:
+            return f"{pris // bra:,}".replace(",", " ")
+    except (ValueError, ZeroDivisionError):
+        pass
+    return ""
+
+
+def _enrich(apartments: list[dict]) -> list[dict]:
+    """Add/refresh computed fields (pris_per_kvm) in-place."""
+    for apt in apartments:
+        apt["pris_per_kvm"] = _compute_pris_per_kvm(apt)
+    return apartments
 
 
 # ---------------------------------------------------------------------------
@@ -698,6 +719,7 @@ def _render(apartments=None, message=None, ok=True, prefill=""):
         apartments = load_data()
     # Favourites float to the top
     apartments = sorted(apartments, key=lambda a: (0 if a.get("favoritt") else 1))
+    _enrich(apartments)
     return render_template_string(
         TEMPLATE, apartments=apartments, message=message,
         ok=ok, prefill=prefill, fields=FIELDS,
@@ -741,7 +763,7 @@ def process():
 
 @app.get("/export")
 def export_excel():
-    buf = build_excel(load_data())
+    buf = build_excel(_enrich(load_data()))
     filename = f"leiligheter_{datetime.now().strftime('%Y%m%d')}.xlsx"
     return send_file(
         buf, as_attachment=True, download_name=filename,
@@ -751,7 +773,7 @@ def export_excel():
 
 @app.get("/export-favoritter")
 def export_favoritter():
-    favoritter = [a for a in load_data() if a.get("favoritt")]
+    favoritter = _enrich([a for a in load_data() if a.get("favoritt")])
     buf = build_excel(favoritter)
     filename = f"favoritter_{datetime.now().strftime('%Y%m%d')}.xlsx"
     return send_file(
