@@ -825,9 +825,11 @@ def refresh_all():
             if data:
                 new_apt = apt_from_scrape(data, finnkode, url)
                 apartments[i] = {**apt, **{k: v for k, v in new_apt.items() if v is not None}}
-                # Explicitly clear solgt if not present in new scrape
+                # Explicitly clear solgt/visning if not present in new scrape
                 if "Solgt" not in data:
                     apartments[i].pop("solgt", None)
+                if "Visning" not in data:
+                    apartments[i].pop("visning", None)
                 updated += 1
         except Exception:
             errors += 1
